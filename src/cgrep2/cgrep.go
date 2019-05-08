@@ -120,18 +120,19 @@ func doJobs(done chan<- struct{}, lineRx *regexp.Regexp, jobs <-chan Job) {
 }
 
 func waitAndProcessResults(done <-chan struct{}, results <-chan Result) {
-    for working := workers; working > 0; {
-        select { // Blocking
+    //execute until there are active worker routine
+	for working := workers; working > 0; {
+        select { // Blocking to wait for receiving a result or a done value
         case result := <-results:
             fmt.Printf("%s:%d:%s\n", result.filename, result.lino,
                 result.line)
         case <-done:
-            working--
+            working-- //decrease active worker
         }
     }
 DONE:
-    for {
-        select { // Nonblocking
+    for { //is not CPU-wasting for bon-blocking select since no need to wait
+        select { // Nonblocking, repeat until all un-processed results have been output
         case result := <-results:
             fmt.Printf("%s:%d:%s\n", result.filename, result.lino,
                 result.line)
