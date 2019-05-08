@@ -25,7 +25,7 @@ import (
     "safemap"
 )
 
-var workers = runtime.NumCPU()
+var workers = runtime.NumCPU() //assume there are four workers
 
 func main() {
     runtime.GOMAXPROCS(runtime.NumCPU()) // Use all the machine's cores
@@ -33,12 +33,13 @@ func main() {
         fmt.Printf("usage: %s <file.log>\n", filepath.Base(os.Args[0]))
         os.Exit(1)
     }
-    lines := make(chan string, workers*4)
-    done := make(chan struct{}, workers)
+	//create two channel to organize the processing
+    lines := make(chan string, workers*4) //send each line from log file to worker routine, assign line channel a small buffer to reduce the likelihood that worker routines being blocked
+    done := make(chan struct{}, workers) //keep track of when all work has been done
     pageMap := safemap.New()
-    go readLines(os.Args[1], lines)
+    go readLines(os.Args[1], lines) //#2, read lines from file
     processLines(done, pageMap, lines)
-    waitUntil(done)
+    waitUntil(done) //wait for all worker routines finished
     showResults(pageMap)
 }
 
@@ -52,6 +53,9 @@ func readLines(filename string, lines chan<- string) {
     for {
         line, err := reader.ReadString('\n')
         if line != "" {
+			//each line is sent to lines channel, this step would be 
+			//  blocked if the channel buffer is full, util another 
+			//  routine receives one and free buffer
             lines <- line
         }
         if err != nil {
@@ -61,23 +65,29 @@ func readLines(filename string, lines chan<- string) {
             break
         }
     }
-    close(lines)
+    close(lines) //once all lines has been read, close the lines channel, 
+	//this tell the receciver that there is no more data to receive
 }
 
 func processLines(done chan<- struct{}, pageMap safemap.SafeMap,
     lines <-chan string) {
     getRx := regexp.MustCompile(`GET[ \t]+([^ \t\n]+[.]html?)`)
+	//the updater function
     incrementer := func(value interface{}, found bool) interface{} {
         if found {
+			//use type assertion before increment
             return value.(int) + 1
         }
         return 1
     }
+	//# 3, 4, 5, 6 is to process
     for i := 0; i < workers; i++ {
         go func() {
             for line := range lines {
                 if matches := getRx.FindStringSubmatch(line);
                     matches != nil {
+					//match[0]: entire matching text, [1]: text matched
+					//  by parenthesized subexpression
                     pageMap.Update(matches[1], incrementer)
                 }
             }
@@ -87,13 +97,14 @@ func processLines(done chan<- struct{}, pageMap safemap.SafeMap,
 }
 
 func waitUntil(done <-chan struct{}) {
+	//blocked until all work done
     for i := 0; i < workers; i++ {
         <-done
     }
 }
 
 func showResults(pageMap safemap.SafeMap) {
-    pages := pageMap.Close()
+    pages := pageMap.Close() //get the underlying map
     for page, count := range pages {
         fmt.Printf("%8d %s\n", count, page)
     }
