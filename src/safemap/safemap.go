@@ -19,13 +19,14 @@ type commandData struct {
     action  commandAction
     key     string
     value   interface{}
-    result  chan<- interface{}
+    result  chan<- interface{}	//both result and data are declared as unidirectional send-only channels, result is a universal chann
     data    chan<- map[string]interface{}
     updater UpdateFunc
 }
 
 type commandAction int
 
+//command for channel
 const (
     remove commandAction = iota
     end
@@ -40,6 +41,7 @@ type findResult struct {
     found bool
 }
 
+//exported interface
 type SafeMap interface {
     Insert(string, interface{})
     Delete(string)
@@ -53,14 +55,16 @@ type UpdateFunc func(interface{}, bool) interface{}
 
 func New() SafeMap {
     sm := make(safeMap) // type safeMap chan commandData
-    go sm.run()
-    return sm
+    go sm.run() //the returned map is associated with a goroutine
+    return sm //return safeMap as a SafeMap interface 
 }
 
 func (sm safeMap) run() {
-    store := make(map[string]interface{})
-    for command := range sm {
+    store := make(map[string]interface{}) //underlying map that used to store the map items
+	//a infinite loop until sm channel has been close
+    for command := range sm { //iterate over safemap channel and perform receiveds from channel
         switch command.action {
+		//operate on underlying map
         case insert:
             store[command.key] = command.value
         case remove:
@@ -74,34 +78,51 @@ func (sm safeMap) run() {
             value, found := store[command.key]
             store[command.key] = command.updater(value, found)
         case end:
-            close(sm)
-            command.data <- store
+            close(sm) //exit the for .. range loop and free up go-routine
+            command.data <- store //return the underlying map
         }
     }
 }
 
+/*
+ Overhead: each command requires the creation of commandData, and 
+  send it through a channel. By which map access is automatically serialized
+  by Go
+*/
+
+//add item m[key] = value
 func (sm safeMap) Insert(key string, value interface{}) {
+	//send command to the safe map
     sm <- commandData{action: insert, key: key, value: value}
 }
 
+//delete item by key
 func (sm safeMap) Delete(key string) {
     sm <- commandData{action: remove, key: key}
 }
 
+//receive reply from safe map
 func (sm safeMap) Find(key string) (value interface{}, found bool) {
     reply := make(chan interface{})
+	//bind reply with result channel
     sm <- commandData{action: find, key: key, result: reply}
-    result := (<-reply).(findResult)
+    result := (<-reply).(findResult) //parse the channel
     return result.value, result.found
 }
 
 func (sm safeMap) Len() int {
     reply := make(chan interface{})
     sm <- commandData{action: length, result: reply}
-    return (<-reply).(int)
+    return (<-reply).(int) //parse the channel
 }
 
-// If the updater calls a safeMap method we will get deadlock!
+// If the updater calls a safeMap method we will get deadlock!, this is because
+//    update case cannot finish until the updater() function returns, but if 
+//    updater() has called a safeMap method, that call will be blocked waiting
+//	  to be processed util update case finished, therefore neither will be able
+//	  to finish.
+// to implement an atomic update, retrieve and update the value as a 
+//  single uninterruptible operation
 func (sm safeMap) Update(key string, updater UpdateFunc) {
     sm <- commandData{action: update, key: key, updater: updater}
 }
@@ -111,5 +132,5 @@ func (sm safeMap) Update(key string, updater UpdateFunc) {
 func (sm safeMap) Close() map[string]interface{} {
     reply := make(chan map[string]interface{})
     sm <- commandData{action: end, data: reply}
-    return <-reply
+    return <-reply //return the map as a normal one
 }
