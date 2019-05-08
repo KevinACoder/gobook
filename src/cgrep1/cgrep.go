@@ -31,14 +31,14 @@ import (
 var workers = runtime.NumCPU()
 
 type Result struct {
-    filename string
-    lino     int
-    line     string
+    filename string  //file name
+    lino     int	 //line number
+    line     string  //string content of line
 }
 
 type Job struct {
-    filename string
-    results  chan<- Result
+    filename string  //the name of the file on procesing
+    results  chan<- Result  //channel that any result to be sent
 }
 
 func (job Job) Do(lineRx *regexp.Regexp) {
@@ -48,18 +48,19 @@ func (job Job) Do(lineRx *regexp.Regexp) {
         return
     }
     defer file.Close()
-    reader := bufio.NewReader(file)
+    reader := bufio.NewReader(file) //read file into buf
     for lino := 1; ; lino++ {
-        line, err := reader.ReadBytes('\n')
-        line = bytes.TrimRight(line, "\n\r")
+        line, err := reader.ReadBytes('\n') //read a line at one time
+        line = bytes.TrimRight(line, "\n\r") //get rid of line end
         if lineRx.Match(line) {
+			//get one match result and sent to result channel
             job.results <- Result{job.filename, lino, string(line)}
         }
         if err != nil {
             if err != io.EOF {
                 log.Printf("error:%d: %s\n", lino, err)
             }
-            break
+            break //reach EOF or other error
         }
     }
 }
@@ -67,13 +68,20 @@ func (job Job) Do(lineRx *regexp.Regexp) {
 func main() {
     runtime.GOMAXPROCS(runtime.NumCPU()) // Use all the machine's cores
     if len(os.Args) < 3 || os.Args[1] == "-h" || os.Args[1] == "--help" {
-        fmt.Printf("usage: %s <regexp> <files>\n",
+        //print prompt info
+		fmt.Printf("usage: %s <regexp> <files>\n",
             filepath.Base(os.Args[0]))
         os.Exit(1)
     }
+
+	//Compile the input regex
+	// lineRx is a shared pointer to value, which shall be a cause of 
+	//  concern since it's not thread safe, but Go doc *regexp.Regexp is
+	//  safe to be shared in as many routines
     if lineRx, err := regexp.Compile(os.Args[1]); err != nil {
         log.Fatalf("invalid regexp: %s\n", err)
     } else {
+		//regex + file list
         grep(lineRx, commandLineFiles(os.Args[2:]))
     }
 }
@@ -82,6 +90,7 @@ func commandLineFiles(files []string) []string {
     if runtime.GOOS == "windows" {
         args := make([]string, 0, len(files))
         for _, name := range files {
+			//return names of all files matching pattern
             if matches, err := filepath.Glob(name); err != nil {
                 args = append(args, name) // Invalid pattern
             } else if matches != nil { // At least one match
@@ -94,43 +103,56 @@ func commandLineFiles(files []string) []string {
 }
 
 func grep(lineRx *regexp.Regexp, filenames []string) {
+	//create three bidirection channel as per processor
+	//  therefore to minimize needless blocking
     jobs := make(chan Job, workers)
+	//results is implemented as a much larger buffer
     results := make(chan Result, minimum(1000, len(filenames)))
-    done := make(chan struct{}, workers)
+    done := make(chan struct{}, workers) //not caring whether it's true or flase
 
     go addJobs(jobs, filenames, results) // Executes in its own goroutine
-    for i := 0; i < workers; i++ {
+    //do jobs in four seprate routines (executions)
+	for i := 0; i < workers; i++ {
         go doJobs(done, lineRx, jobs) // Each executes in its own goroutine
     }
+	//wait all work to be done and close the results channel
     go awaitCompletion(done, results) // Executes in its own goroutine
     processResults(results)           // Blocks until the work is done
 }
 
 func addJobs(jobs chan<- Job, filenames []string, results chan<- Result) {
-    for _, filename := range filenames {
-        jobs <- Job{filename, results}
+    //send every job to job channel, the job channel has a buffer size of
+	//  four, so the first four jobs are executed immediately, other are 
+	//  waiting until free up room
+	for _, filename := range filenames {
+        jobs <- Job{filename, results} //send job to channel
     }
-    close(jobs)
+    close(jobs) //close after all jobs have been sent
 }
 
 func doJobs(done chan<- struct{}, lineRx *regexp.Regexp, jobs <-chan Job) {
-    for job := range jobs {
+    //each execution iter over the same receive-only channel
+	for job := range jobs {
+		//routine blocked until job is available
         job.Do(lineRx)
     }
-    done <- struct{}{}
+    done <- struct{}{} //signify until run out of jobs
 }
 
 func awaitCompletion(done <-chan struct{}, results chan Result) {
     for i := 0; i < workers; i++ {
-        <-done
+        <-done //blocking until all execution send signified
     }
     close(results)
 }
 
 func processResults(results <-chan Result) {
+	//blocking waiting for results
     for result := range results {
         fmt.Printf("%s:%d:%s\n", result.filename, result.lino, result.line)
     }
+	//once all results have been processed, loop finished and program
+	//  terminate
 }
 
 func minimum(x int, ys ...int) int {
