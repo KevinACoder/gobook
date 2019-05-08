@@ -36,16 +36,19 @@ func main() {
     inFilename, outFilename, err := filenamesFromCommandLine()
     if err != nil {
         fmt.Println(err)
-        os.Exit(1)
+        os.Exit(1) //any pending defer func will lose
     }
+	//default file descriptor
     inFile, outFile := os.Stdin, os.Stdout
     if inFilename != "" {
         if inFile, err = os.Open(inFilename); err != nil {
+			//log the error and exit
             log.Fatal(err)
         }
         defer inFile.Close()
     }
     if outFilename != "" {
+		//create or truncate
         if outFile, err = os.Create(outFilename); err != nil {
             log.Fatal(err)
         }
@@ -77,30 +80,34 @@ func filenamesFromCommandLine() (inFilename, outFilename string,
 }
 
 func americanise(inFile io.Reader, outFile io.Writer) (err error) {
-    reader := bufio.NewReader(inFile)
+    reader := bufio.NewReader(inFile) //buffer the in\out
     writer := bufio.NewWriter(outFile)
+	//flush writer buffer before leave
     defer func() {
         if err == nil {
-            err = writer.Flush()
+            err = writer.Flush() //if flush is fail, err flag would be returned to caller
         }
     }()
 
-    var replacer func(string) string
+    var replacer func(string) string //1
     if replacer, err = makeReplacerFunction(britishAmerican); err != nil {
         return err
     }
+	//panic if the regex is invalid
     wordRx := regexp.MustCompile("[A-Za-z]+")
     eof := false
     for !eof {
-        var line string
-        line, err = reader.ReadString('\n')
+        var line string //2
+        line, err = reader.ReadString('\n') //read lines from buffered reader
         if err == io.EOF {
             err = nil   // io.EOF isn't really an error
             eof = true  // this will end the loop at the next iteration
-        } else if err != nil {
+        } else if err != nil { //3
             return err  // finish immediately for real errors
         }
+		//replace every matches
         line = wordRx.ReplaceAllStringFunc(line, replacer)
+		//write to buffered writer
         if _, err = writer.WriteString(line); err != nil {
             return err
         }
@@ -108,6 +115,7 @@ func americanise(inFile io.Reader, outFile io.Writer) (err error) {
     return nil
 }
 
+/*input path of file include word to convert, return a replacer and error flag*/
 func makeReplacerFunction(file string) (func(string) string, error) {
     rawBytes, err := ioutil.ReadFile(file)
     if err != nil {
@@ -116,15 +124,16 @@ func makeReplacerFunction(file string) (func(string) string, error) {
     text := string(rawBytes)
 
     usForBritish := make(map[string]string)
-    lines := strings.Split(text, "\n")
+    lines := strings.Split(text, "\n") //split string by line
     for _, line := range lines {
-        fields := strings.Fields(line)
+        fields := strings.Fields(line) //tokenize string by whitespace with some forgiving for human edited file
         if len(fields) == 2 {
             usForBritish[fields[0]] = fields[1]
         }
     }
 
     return func(word string) string {
+		//lookup table, the reference can be passed around
         if usWord, found := usForBritish[word]; found {
             return usWord
         }
