@@ -29,10 +29,12 @@ func main() {
     algorithm,
         minSize, maxSize, suffixes, files := handleCommandLine()
 
+	fmt.Println("para", minSize, maxSize, suffixes, files)
     if algorithm == 1 {
         sink(filterSize(minSize, maxSize, filterSuffixes(suffixes, source(files))))
     } else {
-        channel1 := source(files)
+		fmt.Println("start")
+        channel1 := source(files) //input file names
         channel2 := filterSuffixes(suffixes, channel1)
         channel3 := filterSize(minSize, maxSize, channel2)
         sink(channel3)
@@ -41,6 +43,7 @@ func main() {
 
 func handleCommandLine() (algorithm int, minSize, maxSize int64,
     suffixes, files []string) {
+	//add command line parameter
     flag.IntVar(&algorithm, "algorithm", 1, "1 or 2")
     flag.Int64Var(&minSize, "min", -1,
         "minimum file size (-1 means no minimum)")
@@ -49,6 +52,7 @@ func handleCommandLine() (algorithm int, minSize, maxSize int64,
     var suffixesOpt *string = flag.String("suffixes", "",
         "comma-separated list of file suffixes")
     flag.Parse()
+	//parse command line to return
     if algorithm != 1 && algorithm != 2 {
         algorithm = 1
     }
@@ -59,7 +63,7 @@ func handleCommandLine() (algorithm int, minSize, maxSize int64,
     if *suffixesOpt != "" {
         suffixes = strings.Split(*suffixesOpt, ",")
     }
-    files = flag.Args()
+    files = flag.Args() //the reset input is file names
     return algorithm, minSize, maxSize, suffixes, files
 }
 
@@ -83,10 +87,12 @@ func filterSuffixes(suffixes []string, in <-chan string) <-chan string {
                 out <- filename
                 continue
             }
+
+			//filter file by extension
             ext := strings.ToLower(filepath.Ext(filename))
             for _, suffix := range suffixes {
                 if ext == suffix {
-                    out <- filename
+                    out <- filename //save match file
                     break
                 }
             }
@@ -109,6 +115,7 @@ func filterSize(minimum, maximum int64, in <-chan string) <-chan string {
             if err != nil {
                 continue // ignore files we can't process
             }
+			//filter file by the size
             size := finfo.Size()
             if (minimum == -1 || minimum > -1 && minimum <= size) &&
                 (maximum == -1 || maximum > -1 && maximum >= size) {
