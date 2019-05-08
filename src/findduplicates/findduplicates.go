@@ -37,9 +37,9 @@ type pathsInfo struct {
 }
 
 type fileInfo struct {
-    sha1 []byte
-    size int64
-    path string
+    sha1 []byte  //file checksum
+    size int64   //file size
+    path string  //path of file
 }
 
 func main() {
@@ -48,7 +48,7 @@ func main() {
         fmt.Printf("usage: %s <path>\n", filepath.Base(os.Args[0]))
         os.Exit(1)
     }
-
+	//make a channel to pass file info
     infoChan := make(chan fileInfo, maxGoroutines*2)
     go findDuplicates(infoChan, os.Args[1])
     pathData := mergeResults(infoChan)
@@ -57,6 +57,8 @@ func main() {
 
 func findDuplicates(infoChan chan fileInfo, dirname string) {
     waiter := &sync.WaitGroup{}
+	//walk through the target dir, call-back function that will apply to 
+	//  each file/directory
     filepath.Walk(dirname, makeWalkFunc(infoChan, waiter))
     waiter.Wait() // Blocks until all the work is done
     close(infoChan)
@@ -64,13 +66,15 @@ func findDuplicates(infoChan chan fileInfo, dirname string) {
 
 func makeWalkFunc(infoChan chan fileInfo,
     waiter *sync.WaitGroup) func(string, os.FileInfo, error) error {
+	//return a closure function as call-back of dir walk through
     return func(path string, info os.FileInfo, err error) error {
         if err == nil && info.Size() > 0 &&
             (info.Mode()&os.ModeType == 0) {
-            if info.Size() < maxSizeOfSmallFile ||
-                runtime.NumGoroutine() > maxGoroutines {
+            if info.Size() < maxSizeOfSmallFile || runtime.NumGoroutine() > maxGoroutines {
+				//no free processor available, process file in current thread
                 processFile(path, info, infoChan, nil)
             } else {
+				//if have free processor, process file with a new thread
                 waiter.Add(1)
                 go processFile(path, info, infoChan,
                     func() { waiter.Done() })
@@ -82,6 +86,7 @@ func makeWalkFunc(infoChan chan fileInfo,
 
 func processFile(filename string, info os.FileInfo,
     infoChan chan fileInfo, done func()) {
+	//run call-back function to signify work done
     if done != nil {
         defer done()
     }
@@ -91,6 +96,7 @@ func processFile(filename string, info os.FileInfo,
         return
     }
     defer file.Close()
+	//get size as well as SHA1 value of file
     hash := sha1.New()
     if size, err := io.Copy(hash, file);
         size != info.Size() || err != nil {
@@ -101,13 +107,14 @@ func processFile(filename string, info os.FileInfo,
         }
         return
     }
+	//pack file info and send to the channel
     infoChan <- fileInfo{hash.Sum(nil), info.Size(), filename}
 }
 
 func mergeResults(infoChan <-chan fileInfo) map[string]*pathsInfo {
     pathData := make(map[string]*pathsInfo)
     format := fmt.Sprintf("%%016X:%%%dX", sha1.Size*2) // == "%016X:%40X"
-    for info := range infoChan {
+    for info := range infoChan { //will block if no info in channel, and will exit if channel is closed
         key := fmt.Sprintf(format, info.size, info.sha1)
         value, found := pathData[key]
         if !found {
@@ -125,6 +132,7 @@ func outputResults(pathData map[string]*pathsInfo) {
         keys = append(keys, key)
     }
     sort.Strings(keys)
+	//print the search results
     for _, key := range keys {
         value := pathData[key]
         if len(value.paths) > 1 {
